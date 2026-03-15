@@ -1,6 +1,13 @@
 # StockAny
 
-StockAny is a chat-first stock analysis skill for Codex and OpenClaw.
+StockAny is a chat-first stock analysis skill for Codex and OpenClaw, with US equities, A-shares, filings, trades, and investment charter workflows.
+
+It is designed for conversation-first investing workflows:
+
+- build and maintain stock dossiers from natural language
+- record trades and positions through chat
+- sync SEC, CNInfo, Yahoo Finance, and AKShare-backed data
+- generate charter-aware advice briefings for the surrounding agent to interpret
 
 It supports:
 
@@ -58,6 +65,10 @@ Install runtime dependencies with:
 ```bash
 python3 -m pip install --user -r requirements.txt
 ```
+
+## License
+
+This project is licensed under [Apache-2.0](LICENSE).
 
 ## Publish To GitHub
 
