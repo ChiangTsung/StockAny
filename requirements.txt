@@ -1,0 +1,2 @@
+akshare>=1.18.37
+pypinyin>=0.55.0

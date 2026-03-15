@@ -1,0 +1,6 @@
+{
+  "http": {
+    "user_agent": "StockAny stockany@example.com",
+    "timeout_seconds": 30
+  }
+}
