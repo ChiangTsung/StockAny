@@ -817,6 +817,48 @@ def _should_auto_apply_detected_charter_signal(message: str) -> bool:
     )
 
 
+def _classify_research_mode(
+    topic: dict[str, Any],
+    manifest: dict[str, Any],
+    material_errors: list[str],
+) -> tuple[str, dict[str, Any]]:
+    items = manifest.get("items", [])
+    counts = {
+        "issuer_snapshot": 0,
+        "market_snapshot": 0,
+        "document": 0,
+    }
+    for item in items:
+        material_type = item.get("material_type", "")
+        if material_type in counts:
+            counts[material_type] += 1
+
+    member_count = len(topic.get("member_securities", []))
+    has_core_materials = counts["issuer_snapshot"] >= max(member_count, 1)
+    has_supporting_materials = counts["document"] > 0 or counts["market_snapshot"] >= max(member_count, 1)
+    missing_local_documents = [error for error in material_errors if error.startswith("no_local_documents_for_")]
+    blocking_errors = [error for error in material_errors if not error.startswith("no_local_documents_for_")]
+
+    mode = "analysis" if has_core_materials and has_supporting_materials and not blocking_errors else "collecting"
+    reason = "materials_ready_for_analysis" if mode == "analysis" else "missing_core_or_supporting_materials"
+    if missing_local_documents and mode == "analysis":
+        reason = "analysis_with_partial_local_documents"
+
+    guidance = (
+        "已有本地财报或行情资料，优先围绕当前 report 分析、回答问题并更新结论；除非关键材料缺失，否则不要继续扩展式搜集。"
+        if mode == "analysis"
+        else "当前仍以补齐关键资料为主，但应只围绕 report 中尚未解决的缺口进行最小化补充。"
+    )
+    return mode, {
+        "member_count": member_count,
+        "material_counts": counts,
+        "missing_local_documents": missing_local_documents,
+        "blocking_errors": blocking_errors,
+        "reason": reason,
+        "guidance": guidance,
+    }
+
+
 def prepare_turn(*, topic_id: str | None = None, topic_query: str | None = None, message: str = "") -> dict[str, Any]:
     init_db()
     if topic_id:
@@ -837,6 +879,7 @@ def prepare_turn(*, topic_id: str | None = None, topic_query: str | None = None,
         needs_user_input = result.get("needs_user_input", [])
 
     manifest, material_errors = _collect_topic_materials(topic)
+    research_mode, research_state = _classify_research_mode(topic, manifest, material_errors)
     evaluation = load_evaluation_context()
     charter = load_charter_context()
     report_markdown = topic["report_markdown"]
@@ -848,6 +891,8 @@ def prepare_turn(*, topic_id: str | None = None, topic_query: str | None = None,
         "last_material_errors": material_errors,
         "charter_version": charter.get("version", 0),
         "evaluation_version": evaluation.get("version", 0),
+        "research_mode": research_mode,
+        "research_state": research_state,
     }
     _write_topic_context(topic, extra_context)
 
@@ -865,6 +910,8 @@ def prepare_turn(*, topic_id: str | None = None, topic_query: str | None = None,
         "charter_markdown": charter.get("raw_markdown", ""),
         "charter_summary": charter.get("summary", ""),
         "materials": manifest.get("items", []),
+        "research_mode": research_mode,
+        "research_state": research_state,
         "dedupe": dedupe,
         "needs_user_input": needs_user_input,
         "reply_brief": {
@@ -872,6 +919,8 @@ def prepare_turn(*, topic_id: str | None = None, topic_query: str | None = None,
             "topic_summary": topic.get("summary", ""),
             "report_summary": report_meta.get("summary", ""),
             "user_message": message,
+            "analysis_priority": research_mode == "analysis",
+            "analysis_guidance": research_state["guidance"],
             "material_error_count": len(material_errors),
             "material_errors": material_errors[:10],
         },
