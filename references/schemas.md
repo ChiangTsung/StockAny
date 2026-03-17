@@ -115,3 +115,77 @@
 
 - `charter_full_markdown` is required whenever a non-empty charter exists.
 - The agent should treat `charter_full_markdown` as the primary charter context and `compiled_rules_json` as a convenience index only.
+
+## Topic Turn Prepare Output
+
+```json
+{
+  "status": "ok",
+  "topic_id": "topic_ai_infrastructure",
+  "topic_action": "created | reused | merged_into_existing",
+  "topic_type": "theme",
+  "report_path": "/abs/path/research/topics/ai-infrastructure/report.md",
+  "report_markdown": "# AI infrastructure Investment Report\\n...",
+  "report_summary": "AI infrastructure 的主题报告已初始化，等待对话逐步完善。",
+  "evaluation_markdown": "# StockAny Evaluation\\n...",
+  "evaluation_summary": "默认展示营收增速、利润率、现金流与估值框架。",
+  "charter_status": "active | unset",
+  "charter_markdown": "# StockAny Charter\\n...",
+  "charter_summary": "单票仓位与退出纪律摘要",
+  "materials": [],
+  "dedupe": {
+    "matched_topic_id": "",
+    "similarity": 0.0,
+    "action": "created_new_topic"
+  },
+  "needs_user_input": [],
+  "reply_brief": {
+    "topic_title": "AI infrastructure",
+    "report_summary": "..."
+  }
+}
+```
+
+- `report_markdown` and `evaluation_markdown` are required.
+- `charter_markdown` may be empty only when `charter_status = unset`.
+
+## Topic Turn Commit Input
+
+```json
+{
+  "user_message": "请把估值和风险写得更清楚",
+  "assistant_reply_markdown": "我已经补上这两块。",
+  "change_note": "补充估值与风险部分。",
+  "report_patch": {
+    "replace_sections": [
+      {
+        "section_id": "valuation_market_expectation",
+        "markdown": "- 当前市场更愿意为确定性更高的龙头支付溢价。"
+      }
+    ],
+    "append_evidence_refs": [
+      "待补：云厂商 capex 指引"
+    ],
+    "updated_summary": "主题报告已补充估值与风险框架。"
+  },
+  "charter_signals": [],
+  "evaluation_signals": []
+}
+```
+
+## Topic Turn Commit Output
+
+```json
+{
+  "topic_id": "topic_ai_infrastructure",
+  "report_path": "/abs/path/research/topics/ai-infrastructure/report.md",
+  "report_summary": "主题报告已补充估值与风险框架。",
+  "changed_sections": [
+    "valuation_market_expectation"
+  ],
+  "report_hash_before": "abc",
+  "report_hash_after": "def",
+  "charter_updated": false,
+  "evaluation_updated": true
+}
+```

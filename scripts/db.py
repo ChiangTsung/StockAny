@@ -6,7 +6,9 @@ from pathlib import Path
 
 from common import (
     DB_PATH,
+    LEGACY_DOSSIERS_DIR,
     RESEARCH_DIR,
+    TOPICS_DIR,
     detect_market,
     display_code_to_symbol,
     ensure_runtime_layout,
@@ -124,6 +126,91 @@ CREATE TABLE IF NOT EXISTS daily_reviews (
     candidate_count INTEGER NOT NULL,
     document_alert_count INTEGER NOT NULL,
     position_alert_count INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS topics (
+    topic_id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    topic_type TEXT NOT NULL CHECK(topic_type IN ('security', 'series', 'basket', 'theme')),
+    status TEXT NOT NULL CHECK(status IN ('active', 'archived', 'merged')),
+    workspace_path TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    report_hash TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS topic_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id TEXT NOT NULL,
+    security_id INTEGER NOT NULL,
+    member_role TEXT NOT NULL DEFAULT 'primary',
+    confidence REAL NOT NULL DEFAULT 1.0,
+    created_at TEXT NOT NULL,
+    UNIQUE(topic_id, security_id, member_role),
+    FOREIGN KEY(topic_id) REFERENCES topics(topic_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS topic_aliases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    normalized_alias TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(topic_id, normalized_alias),
+    FOREIGN KEY(topic_id) REFERENCES topics(topic_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS topic_turns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id TEXT NOT NULL,
+    user_message TEXT NOT NULL DEFAULT '',
+    assistant_reply_markdown TEXT NOT NULL DEFAULT '',
+    report_patch_json TEXT NOT NULL DEFAULT '{}',
+    charter_signals_json TEXT NOT NULL DEFAULT '[]',
+    evaluation_signals_json TEXT NOT NULL DEFAULT '[]',
+    change_note TEXT NOT NULL DEFAULT '',
+    changed_sections_json TEXT NOT NULL DEFAULT '[]',
+    report_hash_before TEXT NOT NULL DEFAULT '',
+    report_hash_after TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(topic_id) REFERENCES topics(topic_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS topic_material_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id TEXT NOT NULL,
+    security_id INTEGER,
+    material_type TEXT NOT NULL,
+    material_key TEXT NOT NULL,
+    local_path TEXT NOT NULL DEFAULT '',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    UNIQUE(topic_id, material_type, material_key),
+    FOREIGN KEY(topic_id) REFERENCES topics(topic_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS topic_similarity_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_topic_id TEXT NOT NULL,
+    target_topic_id TEXT NOT NULL,
+    similarity_score REAL NOT NULL,
+    resolution TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    UNIQUE(source_topic_id, target_topic_id)
+);
+
+CREATE TABLE IF NOT EXISTS evaluation_versions (
+    version INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL CHECK(status IN ('active', 'superseded')),
+    raw_markdown TEXT NOT NULL,
+    compiled_json TEXT NOT NULL,
+    source_type TEXT NOT NULL DEFAULT 'manual',
+    source_ref TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    active INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 """
@@ -396,8 +483,12 @@ def import_legacy_research(conn: sqlite3.Connection | None = None) -> None:
         for path in sorted(RESEARCH_DIR.iterdir()) if RESEARCH_DIR.exists() else []:
             if not path.is_dir():
                 continue
+            if path in {TOPICS_DIR, LEGACY_DOSSIERS_DIR}:
+                continue
             display_candidate = path.name.upper()
             ticker = normalize_symbol(display_candidate)
+            if not ticker:
+                continue
             row = conn.execute("SELECT ticker FROM dossiers WHERE ticker = ?", (ticker,)).fetchone()
             if row:
                 continue
@@ -449,4 +540,4 @@ def next_charter_version(conn: sqlite3.Connection) -> int:
 
 
 def dossier_dir(display_code: str) -> Path:
-    return RESEARCH_DIR / normalize_symbol(display_code).upper()
+    return LEGACY_DOSSIERS_DIR / normalize_symbol(display_code).upper()

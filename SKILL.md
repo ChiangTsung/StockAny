@@ -5,12 +5,16 @@ description: Chat-first stock analysis, portfolio tracking, filing collection, a
 
 # StockAny
 
-Use this skill as the system itself. Keep state local in `state/`, keep source materials in `research/`, and favor chat-driven workflows over direct file edits. Use the agent you are currently running in for final reasoning; StockAny only prepares structured evidence, state, and review packets.
+Use this skill as the system itself. Keep state local in `state/`, keep source materials in `research/topics/`, and favor chat-driven workflows over direct file edits. Use the agent you are currently running in for final reasoning; StockAny only prepares structured evidence, state, and review packets.
 
 ## Follow The Main Workflows
 
 - Use `./stockany ...` as the default entrypoint for all normal skill operations.
 - Do not narrate interpreter fallback or discuss `python` vs `python3` unless the launcher itself fails.
+- Default to the topic workflow: `./stockany topic turn prepare ...` followed by `./stockany topic turn commit ...`.
+- Open or reuse a topic with `./stockany topic open --query "..."`.
+- Show the latest canonical report with `./stockany topic show --topic-id ...`.
+- Use `./stockany evaluation show` whenever the user has stable reporting or metric preferences.
 - Parse user chat with `./stockany intake parse-message --message "..."`.
 - Resolve a security with `./stockany security resolve --query "贵州茅台"`.
 - Create or update a tracked stock with `./stockany dossier create --ticker ... --thesis ...`.
@@ -32,10 +36,12 @@ Use this skill as the system itself. Keep state local in `state/`, keep source m
 
 ## Preserve The Skill Contract
 
-- Keep `research/<ticker>/` as durable research storage.
+- Keep `research/topics/<topic-slug>/` as the durable home for report state and issuer snapshots.
 - Keep `state/stockany.db` as the structured source of truth.
 - Keep the canonical charter markdown in `assets/charter-active.md`.
+- Keep the canonical evaluation markdown in `assets/evaluation-active.md`.
 - Treat `assets/charter-active-v*.md` as versioned snapshots of merged or explicitly set charters.
+- Treat `assets/evaluation-v*.md` as versioned snapshots of reporting preferences.
 - Keep `state/cache/cn-securities.json` as the A-share security-master cache.
 - Keep `inbox/pending-review/` for new filings waiting for human review.
 - Keep `inbox/charter-candidates/` for extracted charter candidate notes.

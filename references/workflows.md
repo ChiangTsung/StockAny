@@ -1,5 +1,15 @@
 # Workflows
 
+## Topic Report Loop
+
+- Open or reuse a topic with `./stockany topic open --query "..."`.
+- For the surrounding skill, use `./stockany topic turn prepare --topic-id ... --message "..."` or `--topic-query ...`.
+- Treat the returned `report_markdown`, `evaluation_markdown`, and `charter_markdown` as the canonical long-term context.
+- Have the surrounding model produce the final user reply plus a report patch.
+- Commit the turn with `./stockany topic turn commit --topic-id ... --commit-json /path/to/payload.json`.
+- Use `./stockany topic show --topic-id ...` to inspect the latest canonical report and linked materials.
+- Use `./stockany topic archive --topic-id ...` to archive a finished or stale topic without deleting the workspace.
+
 ## Parse User Chat
 
 - Run `./stockany intake parse-message --message "..."`.
@@ -62,6 +72,8 @@
 ## Manage The Charter
 
 - Show the current charter with `./stockany charter show`.
+- List charter history with `./stockany charter history`.
+- Switch the active charter with `./stockany charter switch --version N`.
 - Read the canonical charter markdown from `assets/charter-active.md` when you need the actual current charter text.
 - Use `assets/charter-template.md` as a scaffold and `assets/charter-active-v*.md` as version history.
 - Set a full charter from markdown with `./stockany charter set --file assets/charter-active.md` or another charter markdown file.
@@ -69,3 +81,11 @@
 - Review a candidate with `./stockany charter candidates review --candidate-id N`.
 - Merge confirmed candidates with `./stockany charter candidates merge --candidate-ids N ...`.
 - After `charter set` or candidate merge, the skill syncs the latest charter back into `assets/charter-active.md`.
+
+## Manage Evaluation
+
+- Show the current reporting preferences with `./stockany evaluation show`.
+- Read the canonical evaluation markdown from `assets/evaluation-active.md` when you need the full preference text.
+- List history with `./stockany evaluation history`.
+- Switch the active evaluation version with `./stockany evaluation switch --version N`.
+- Rebuild the compiled cache from the active markdown with `./stockany evaluation rebuild`.

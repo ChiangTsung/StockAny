@@ -11,19 +11,23 @@ bootstrap_path()
 
 from advisor import generate_advice_run
 from charter import (
+    list_charter_history,
     list_candidates,
     merge_candidates,
     review_candidate,
     set_charter_from_file,
     show_charter,
+    switch_charter_version,
 )
 from db import connect, dossier_dir, init_db
+from evaluation import list_evaluation_history, rebuild_evaluation, show_evaluation, switch_evaluation_version
 from filings import review_documents, sync_filings
 from intake import parse_message
 from journal import run_daily_review
 from market_data import refresh_market
 from portfolio import portfolio_summary, record_trade
 from security_master import resolve_security, resolve_security_candidates, resolve_security_or_raise
+from topic_runtime import archive_topic, commit_turn, open_topic, prepare_turn, show_topic
 
 
 def _pick_security_from_args(args: argparse.Namespace) -> tuple[dict | None, dict | None]:
@@ -195,6 +199,14 @@ def cmd_charter_set(args: argparse.Namespace) -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+def cmd_charter_history(_: argparse.Namespace) -> None:
+    print(json.dumps(list_charter_history(), ensure_ascii=False, indent=2))
+
+
+def cmd_charter_switch(args: argparse.Namespace) -> None:
+    print(json.dumps(switch_charter_version(args.version), ensure_ascii=False, indent=2))
+
+
 def cmd_charter_candidates_list(_: argparse.Namespace) -> None:
     print(json.dumps(list_candidates(), ensure_ascii=False, indent=2))
 
@@ -210,6 +222,22 @@ def cmd_charter_candidates_merge(args: argparse.Namespace) -> None:
 def cmd_review_daily(args: argparse.Namespace) -> None:
     result = run_daily_review(review_date=args.review_date, journal_path=args.journal_path)
     print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def cmd_evaluation_show(_: argparse.Namespace) -> None:
+    print(json.dumps(show_evaluation(), ensure_ascii=False, indent=2))
+
+
+def cmd_evaluation_history(_: argparse.Namespace) -> None:
+    print(json.dumps(list_evaluation_history(), ensure_ascii=False, indent=2))
+
+
+def cmd_evaluation_switch(args: argparse.Namespace) -> None:
+    print(json.dumps(switch_evaluation_version(args.version), ensure_ascii=False, indent=2))
+
+
+def cmd_evaluation_rebuild(_: argparse.Namespace) -> None:
+    print(json.dumps(rebuild_evaluation(), ensure_ascii=False, indent=2))
 
 
 def cmd_snapshot_export(args: argparse.Namespace) -> None:
@@ -246,6 +274,28 @@ def cmd_snapshot_export(args: argparse.Namespace) -> None:
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     dump_json(out_path.with_suffix(".json"), {"ticker": security["display_code"], "path": str(out_path)})
     print(json.dumps({"ticker": security["display_code"], "snapshot_path": str(out_path)}, ensure_ascii=False, indent=2))
+
+
+def cmd_topic_open(args: argparse.Namespace) -> None:
+    print(json.dumps(open_topic(args.query), ensure_ascii=False, indent=2))
+
+
+def cmd_topic_show(args: argparse.Namespace) -> None:
+    print(json.dumps(show_topic(args.topic_id), ensure_ascii=False, indent=2))
+
+
+def cmd_topic_archive(args: argparse.Namespace) -> None:
+    print(json.dumps(archive_topic(args.topic_id), ensure_ascii=False, indent=2))
+
+
+def cmd_topic_turn_prepare(args: argparse.Namespace) -> None:
+    result = prepare_turn(topic_id=args.topic_id, topic_query=args.topic_query, message=args.message or "")
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def cmd_topic_turn_commit(args: argparse.Namespace) -> None:
+    payload = json.loads(Path(args.commit_json).read_text(encoding="utf-8"))
+    print(json.dumps(commit_turn(args.topic_id, payload), ensure_ascii=False, indent=2))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -326,6 +376,11 @@ def build_parser() -> argparse.ArgumentParser:
     charter_sub = charter.add_subparsers(dest="charter_command", required=True)
     charter_show = charter_sub.add_parser("show")
     charter_show.set_defaults(func=cmd_charter_show)
+    charter_history = charter_sub.add_parser("history")
+    charter_history.set_defaults(func=cmd_charter_history)
+    charter_switch = charter_sub.add_parser("switch")
+    charter_switch.add_argument("--version", required=True, type=int)
+    charter_switch.set_defaults(func=cmd_charter_switch)
     charter_set = charter_sub.add_parser("set")
     charter_set.add_argument("--file", required=True)
     charter_set.set_defaults(func=cmd_charter_set)
@@ -358,6 +413,41 @@ def build_parser() -> argparse.ArgumentParser:
     intake_parse = intake_sub.add_parser("parse-message")
     intake_parse.add_argument("--message", required=True)
     intake_parse.set_defaults(func=lambda args: print(json.dumps(parse_message(args.message), ensure_ascii=False, indent=2)))
+
+    evaluation = sub.add_parser("evaluation")
+    evaluation_sub = evaluation.add_subparsers(dest="evaluation_command", required=True)
+    evaluation_show = evaluation_sub.add_parser("show")
+    evaluation_show.set_defaults(func=cmd_evaluation_show)
+    evaluation_history = evaluation_sub.add_parser("history")
+    evaluation_history.set_defaults(func=cmd_evaluation_history)
+    evaluation_switch = evaluation_sub.add_parser("switch")
+    evaluation_switch.add_argument("--version", required=True, type=int)
+    evaluation_switch.set_defaults(func=cmd_evaluation_switch)
+    evaluation_rebuild = evaluation_sub.add_parser("rebuild")
+    evaluation_rebuild.set_defaults(func=cmd_evaluation_rebuild)
+
+    topic = sub.add_parser("topic")
+    topic_sub = topic.add_subparsers(dest="topic_command", required=True)
+    topic_open = topic_sub.add_parser("open")
+    topic_open.add_argument("--query", required=True)
+    topic_open.set_defaults(func=cmd_topic_open)
+    topic_show = topic_sub.add_parser("show")
+    topic_show.add_argument("--topic-id", required=True)
+    topic_show.set_defaults(func=cmd_topic_show)
+    topic_archive = topic_sub.add_parser("archive")
+    topic_archive.add_argument("--topic-id", required=True)
+    topic_archive.set_defaults(func=cmd_topic_archive)
+    topic_turn = topic_sub.add_parser("turn")
+    topic_turn_sub = topic_turn.add_subparsers(dest="topic_turn_command", required=True)
+    topic_prepare = topic_turn_sub.add_parser("prepare")
+    topic_prepare.add_argument("--topic-id")
+    topic_prepare.add_argument("--topic-query")
+    topic_prepare.add_argument("--message")
+    topic_prepare.set_defaults(func=cmd_topic_turn_prepare)
+    topic_commit = topic_turn_sub.add_parser("commit")
+    topic_commit.add_argument("--topic-id", required=True)
+    topic_commit.add_argument("--commit-json", required=True)
+    topic_commit.set_defaults(func=cmd_topic_turn_commit)
 
     return parser
 
