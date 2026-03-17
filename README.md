@@ -18,6 +18,47 @@ It supports:
 - evaluation preference memory in `assets/evaluation-active.md`
 - filing sync, review packets, and topic report iteration
 
+## Product Direction
+
+This branch implements the CLI-first architecture for StockAny.
+
+The core idea is:
+
+- the CLI is the durable runtime
+- the skill is a thin chat adapter
+- the main workflow is `continuous topic dialogue -> one canonical investment report`
+
+In practice, that means:
+
+- each topic owns one canonical `report.md`
+- the skill must always receive both the current investment report and the current evaluation preferences as explicit context
+- charter and evaluation memory are versioned and managed by the CLI
+- issuer data is stored inside each topic workspace under `research/topics/<topic>/issuers/<display_code>/`
+- similar topics should be deduplicated or reused before collecting duplicate materials
+- archiving happens at the CLI level without losing report history or topic-contained issuer snapshots
+
+The target user experience is "chat equals output":
+
+- users talk naturally about a security, basket, or theme
+- the CLI silently keeps the report up to date
+- the CLI silently refreshes or links topic materials
+- stable investing rules update the charter
+- stable reporting habits update the evaluation profile
+
+## 中文需求摘要
+
+这条分支的目标是把 StockAny 做成“独立 CLI + 薄 skill”的结构，重点解决稳定性和 token 消耗问题。
+
+- 工作模式不是一次性问答，而是“先搜集资料，再连续对话，围绕一个主题持续生成和修改投资报告”。
+- 一个 `topic` 只保留一份主投资报告，主题可以是单标的、系列、篮子或主题。
+- `prepare / commit` 是 skill 与 CLI 的正式协议：
+  - `prepare` 返回当前报告、evaluation、charter 和 topic materials
+  - `commit` 提交当轮回复、报告 patch、charter/evaluation signals
+- 投资宪章下沉到 CLI 管理，支持首次启动补充、历史版本查看和切换。
+- `evaluation` 也由 CLI 维护，权威文件放在 `assets/evaluation-active.md`，用于记录用户偏好的资料补充与展示方式。
+- issuer 数据不再作为全局主目录维护，而是跟随 topic 自包含存放，便于归档、复盘和导出。
+- CLI 负责相似主题检测、资料复用和归档，尽量避免重复搜索和重复整理。
+
 ## What This Repo Contains
 
 This repository is the clean, publishable skill package:
