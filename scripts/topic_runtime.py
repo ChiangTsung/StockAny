@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import re
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -11,8 +12,8 @@ from charter import apply_charter_signals, load_charter_context
 from common import CN_DISPLAY_CODE_RE, CN_SYMBOL_RE, TOPICS_DIR, US_SYMBOL_RE, dump_json, load_json, safe_filename, sha256_text, slugify, utc_now_iso
 from db import connect, init_db
 from evaluation import apply_evaluation_signals, detect_evaluation_signals, load_evaluation_context
-from filings import review_documents, sync_filings
-from intake import detect_charter_signal
+from filings import review_documents
+from intake import detect_charter_signal, extract_security_query
 from market_data import quote_from_cache, refresh_market
 from security_master import resolve_security_candidates
 
@@ -32,6 +33,32 @@ REPORT_SECTION_ORDER = [
 OPTIONAL_REPORT_SECTIONS = {
     "basket": ["members", "comparison_matrix"],
     "theme": ["members", "comparison_matrix"],
+}
+
+THEME_HINT_PATTERNS = [
+    re.compile(r"([\u4e00-\u9fffA-Za-z0-9.+-]{2,30}?)(?:投资|赛道|板块|主题|行业|方向)"),
+    re.compile(r"([\u4e00-\u9fffA-Za-z0-9.+-]{2,30}?(?:产业链|概念股|概念|链|模块))"),
+]
+
+GENERIC_THEME_STOP_WORDS = {
+    "投资",
+    "行业",
+    "赛道",
+    "板块",
+    "主题",
+    "方向",
+    "个股",
+    "标的",
+    "公司",
+    "股票",
+    "A股",
+    "美股",
+    "研究",
+    "分析",
+    "报告",
+    "逻辑",
+    "估值",
+    "风险",
 }
 
 
@@ -56,6 +83,66 @@ def _looks_like_security_query(query: str) -> bool:
 
 def _report_path(workspace: Path) -> Path:
     return workspace / "report.md"
+
+
+def _normalize_topic_phrase(value: str) -> str:
+    text = re.sub(r"\s+", " ", value.strip(" ，。！？、:：;；-")).strip()
+    text = re.sub(r"^(?:但|那|就|先)?(?:这次|本次)?(?:要)?(?:放到|放在|归到|归入|作为)\s*", "", text)
+    text = re.sub(r"^(?:这次|本次)?(?:重点是|重点看|主要看)\s*", "", text)
+    for prefix in (
+        "这次重点是",
+        "重点是",
+        "主要看",
+        "先看",
+        "我想看",
+        "想看",
+        "围绕",
+        "关于",
+    ):
+        if text.startswith(prefix) and len(text) > len(prefix) + 1:
+            text = text[len(prefix) :].strip()
+            break
+    for suffix in ("投资逻辑", "逻辑", "个股", "标的"):
+        if text.endswith(suffix) and len(text) > len(suffix) + 1:
+            text = text[: -len(suffix)]
+            break
+    for suffix in ("投资", "赛道", "板块", "主题", "行业", "方向", "概念股", "概念"):
+        if text.endswith(suffix) and len(text) > len(suffix) + 1:
+            text = text[: -len(suffix)]
+            break
+    return text.strip()
+
+
+def _security_aliases(security: dict[str, Any] | None) -> set[str]:
+    if not security:
+        return set()
+    aliases = {
+        str(security.get("display_code", "")).strip(),
+        str(security.get("company_name", "")).strip(),
+        str(security.get("company_name_zh", "")).strip(),
+        str(security.get("symbol", "")).strip(),
+    }
+    return {item for item in aliases if item}
+
+
+def _extract_theme_title(message: str, security: dict[str, Any] | None = None) -> str:
+    text = message.strip()
+    if not text:
+        return ""
+    blocked = _security_aliases(security)
+    candidates: list[str] = []
+    for pattern in THEME_HINT_PATTERNS:
+        for match in pattern.findall(text):
+            candidate = _normalize_topic_phrase(match)
+            if not candidate or candidate in GENERIC_THEME_STOP_WORDS or candidate in blocked:
+                continue
+            if len(candidate) < 2:
+                continue
+            candidates.append(candidate)
+    if candidates:
+        candidates.sort(key=lambda item: (len(item), item.count("产业链"), item.count("模块")), reverse=True)
+        return candidates[0]
+    return ""
 
 
 def _report_meta_path(workspace: Path) -> Path:
@@ -237,6 +324,16 @@ def _insert_aliases(conn, topic_id: str, aliases: list[str]) -> None:
         )
 
 
+def _ensure_topic_member(conn, topic_id: str, security: dict[str, Any], member_role: str = "focus") -> None:
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO topic_members (topic_id, security_id, member_role, confidence, created_at)
+        VALUES (?, ?, ?, 1.0, ?)
+        """,
+        (topic_id, security["security_id"], member_role, utc_now_iso()),
+    )
+
+
 def _record_similarity(conn, source_topic_id: str, target_topic_id: str, score: float, resolution: str) -> None:
     if source_topic_id == target_topic_id:
         return
@@ -323,18 +420,25 @@ def _create_topic(
     return topic
 
 
-def open_topic(query: str) -> dict[str, Any]:
+def open_topic(query: str, message: str = "") -> dict[str, Any]:
     init_db()
     query = query.strip()
-    if not query:
+    message = message.strip()
+    if not query and not message:
         raise ValueError("topic query is required")
     with connect() as conn:
+        security_query = query if _looks_like_security_query(query) else extract_security_query(message)
         matches = []
-        if _looks_like_security_query(query):
+        if security_query:
             try:
-                matches = resolve_security_candidates(query, limit=5)
+                matches = resolve_security_candidates(security_query, limit=5)
             except Exception:
                 matches = []
+        security = matches[0] if matches and matches[0]["confidence"] >= 0.95 else None
+        theme_title = _extract_theme_title(message, security=security)
+        if not theme_title and query and not _looks_like_security_query(query):
+            theme_title = query
+
         if len(matches) > 1 and matches[0]["confidence"] < 0.99:
             return {
                 "status": "needs_user_input",
@@ -349,8 +453,61 @@ def open_topic(query: str) -> dict[str, Any]:
                 ],
                 "dedupe": {"matched_topic_id": "", "similarity": 0.0, "action": "clarify"},
             }
-        if matches and matches[0]["confidence"] >= 0.95:
-            security = matches[0]
+        if theme_title:
+            matched_topic, score = _best_theme_match(conn, theme_title)
+            if matched_topic and score >= 0.88:
+                _insert_aliases(
+                    conn,
+                    matched_topic["topic_id"],
+                    [item for item in [query, theme_title, security_query] if item],
+                )
+                if security:
+                    _ensure_topic_member(conn, matched_topic["topic_id"], security, member_role="focus")
+                    _insert_aliases(
+                        conn,
+                        matched_topic["topic_id"],
+                        [security["display_code"], security.get("company_name", ""), security.get("company_name_zh", "")],
+                    )
+                conn.commit()
+                topic = _load_topic(conn, matched_topic["topic_id"])
+                return {
+                    "status": "ok",
+                    "topic_id": topic["topic_id"],
+                    "topic_action": "reused",
+                    "topic_type": topic["topic_type"],
+                    "topic": topic,
+                    "needs_user_input": [],
+                    "dedupe": {"matched_topic_id": topic["topic_id"], "similarity": round(score, 4), "action": "reuse_existing_topic"},
+                }
+
+            aliases = [item for item in [query, theme_title, security_query] if item]
+            if security:
+                aliases.extend([security["display_code"], security.get("company_name", ""), security.get("company_name_zh", "")])
+            topic = _create_topic(
+                conn,
+                title=theme_title,
+                topic_type="theme",
+                aliases=aliases,
+                member_security=security,
+            )
+            if security:
+                conn.execute(
+                    "UPDATE topic_members SET member_role = 'focus' WHERE topic_id = ? AND security_id = ?",
+                    (topic["topic_id"], security["security_id"]),
+                )
+            conn.commit()
+            topic = _load_topic(conn, topic["topic_id"])
+            return {
+                "status": "ok",
+                "topic_id": topic["topic_id"],
+                "topic_action": "created",
+                "topic_type": topic["topic_type"],
+                "topic": topic,
+                "needs_user_input": [],
+                "dedupe": {"matched_topic_id": "", "similarity": 0.0, "action": "created_new_topic"},
+            }
+
+        if security:
             row = conn.execute(
                 """
                 SELECT t.topic_id
@@ -520,9 +677,21 @@ def _ensure_security_snapshot(topic: dict[str, Any], security: dict[str, Any]) -
         "company_name_zh",
         "currency",
     )})
+    materials: list[dict[str, Any]] = []
+    materials.append(
+        {
+            "material_type": "issuer_snapshot",
+            "material_key": f"issuer:{security['display_code']}",
+            "local_path": str(issuer_dir / "issuer.json"),
+            "metadata": {
+                "display_code": security["display_code"],
+                "company_name": security.get("company_name", ""),
+                "company_name_zh": security.get("company_name_zh", ""),
+            },
+        }
+    )
 
     errors: list[str] = []
-    materials: list[dict[str, Any]] = []
     quote_result = None
     try:
         quote_response = refresh_market(security["display_code"])
@@ -549,15 +718,6 @@ def _ensure_security_snapshot(topic: dict[str, Any], security: dict[str, Any]) -
 
     docs_response = review_documents(security["display_code"])
     documents = docs_response.get("documents", [])
-    if not documents:
-        try:
-            sync_response = sync_filings(security["display_code"])
-            if sync_response.get("errors"):
-                errors.extend(item["error"] for item in sync_response["errors"])
-            docs_response = review_documents(security["display_code"])
-            documents = docs_response.get("documents", [])
-        except Exception as exc:
-            errors.append(str(exc))
     for doc in documents:
         copied = _copy_document_to_topic(doc, issuer_dir / "filings")
         if not copied:
@@ -576,6 +736,8 @@ def _ensure_security_snapshot(topic: dict[str, Any], security: dict[str, Any]) -
                 },
             }
         )
+    if not documents:
+        errors.append(f"no_local_documents_for_{security['display_code']}")
     return materials, errors
 
 
@@ -665,7 +827,7 @@ def prepare_turn(*, topic_id: str | None = None, topic_query: str | None = None,
         status = "ok"
         needs_user_input: list[dict[str, Any]] = []
     else:
-        result = open_topic(topic_query or "")
+        result = open_topic(topic_query or "", message=message)
         if result["status"] != "ok":
             return result
         topic = result["topic"]

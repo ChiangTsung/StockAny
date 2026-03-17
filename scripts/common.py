@@ -197,7 +197,8 @@ def safe_filename(value: str) -> str:
 
 
 def slugify(value: str, default: str = "topic") -> str:
-    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip().lower()).strip("-")
+    text = value.strip().lower()
+    slug = re.sub(r"[^\w.-]+", "-", text, flags=re.UNICODE).strip("-_")
     return slug or default
 
 
