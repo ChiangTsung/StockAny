@@ -22,12 +22,17 @@ INBOX_DIR = ROOT / "inbox"
 PENDING_REVIEW_DIR = INBOX_DIR / "pending-review"
 CHARTER_CANDIDATES_DIR = INBOX_DIR / "charter-candidates"
 RESEARCH_DIR = ROOT / "research"
+TOPICS_DIR = RESEARCH_DIR / "topics"
+LEGACY_DOSSIERS_DIR = RESEARCH_DIR / "legacy-dossiers"
 ASSETS_DIR = ROOT / "assets"
 REFERENCES_DIR = ROOT / "references"
 DB_PATH = STATE_DIR / "stockany.db"
 CONFIG_PATH = STATE_DIR / "config.json"
 JOURNAL_DIR = STATE_DIR / "journal"
 REPORTS_DIR = STATE_DIR / "reports"
+EVALUATION_ACTIVE_PATH = ASSETS_DIR / "evaluation-active.md"
+EVALUATION_TEMPLATE_PATH = ASSETS_DIR / "evaluation-template.md"
+EVALUATION_CACHE_PATH = CACHE_DIR / "evaluation.json"
 
 CN_DISPLAY_CODE_RE = re.compile(r"^(\d{6})\.(SH|SZ|BJ)$", re.IGNORECASE)
 CN_SYMBOL_RE = re.compile(r"^\d{6}$")
@@ -57,6 +62,8 @@ def ensure_runtime_layout() -> None:
         JOURNAL_DIR,
         REPORTS_DIR,
         RESEARCH_DIR,
+        TOPICS_DIR,
+        LEGACY_DOSSIERS_DIR,
     ):
         path.mkdir(parents=True, exist_ok=True)
     if not CONFIG_PATH.exists():
@@ -187,6 +194,11 @@ def cache_quote_name(market: str, display_code: str) -> str:
 
 def safe_filename(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-") or "file"
+
+
+def slugify(value: str, default: str = "topic") -> str:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip().lower()).strip("-")
+    return slug or default
 
 
 def markdown_bullet(lines: list[str]) -> str:

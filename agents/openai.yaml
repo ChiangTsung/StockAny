@@ -1,7 +1,7 @@
 interface:
   display_name: "StockAny"
   short_description: "US + A-share research and charter workflow"
-  default_prompt: "Use $stockany and prefer ./stockany for commands to track a US stock or A-share, record trades, sync filings, and maintain a progressive investment charter."
+  default_prompt: "Use $stockany and prefer ./stockany topic turn prepare/commit as the main workflow to maintain topic reports, issuer snapshots, evaluation preferences, and a progressive investment charter."
 
 policy:
   allow_implicit_invocation: true

@@ -1,21 +1,22 @@
 # StockAny
 
-StockAny is a chat-first stock analysis skill for Codex and OpenClaw, with US equities, A-shares, filings, trades, and investment charter workflows.
+StockAny is a CLI-first stock analysis skill for Codex and OpenClaw, with US equities, A-shares, topic reports, filings, trades, and progressive investment-memory workflows.
 
 It is designed for conversation-first investing workflows:
 
-- build and maintain stock dossiers from natural language
+- build and maintain topic-centric investment reports from natural language
 - record trades and positions through chat
 - sync SEC, CNInfo, Yahoo Finance, and AKShare-backed data
-- generate charter-aware advice briefings for the surrounding agent to interpret
+- keep charter and evaluation memory versioned in the CLI
 
 It supports:
 
 - US equities with `Yahoo Finance + SEC`
 - China A-shares with `AKShare + CNInfo`
-- natural-language dossier creation and trade capture
+- natural-language topic creation, dossier creation, and trade capture
 - progressive investment-charter workflows
-- filing sync, review packets, and advice briefings
+- evaluation preference memory in `assets/evaluation-active.md`
+- filing sync, review packets, and topic report iteration
 
 ## What This Repo Contains
 
@@ -52,10 +53,13 @@ Install it as a local AgentSkills-compatible skill directory and let OpenClaw lo
 Use the launcher from the skill root:
 
 ```bash
+./stockany topic open --query "AI infrastructure"
+./stockany topic turn prepare --topic-query "AI infrastructure" --message "先搭报告骨架"
 ./stockany charter show
+./stockany evaluation show
 ./stockany security resolve --query META
 ./stockany security resolve --query 贵州茅台
-./stockany advice run --ticker META --event-type trade_changed
+./stockany topic show --topic-id topic_ai_infrastructure
 ```
 
 ## Dependencies

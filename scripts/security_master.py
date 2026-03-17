@@ -281,9 +281,18 @@ def resolve_security_candidates(query: str, market: str | None = None, limit: in
     raw_query = query.strip()
     normalized = normalize_symbol(raw_query)
     preferred_market = (market or detect_market(raw_query) or "").upper()
+    looks_like_us_ticker = (
+        raw_query.isascii()
+        and raw_query.upper() == raw_query
+        and US_SYMBOL_RE.match(normalized)
+        and not CN_SYMBOL_RE.match(normalized)
+    )
 
     if preferred_market == "CN" or CN_SYMBOL_RE.match(normalized) or CN_DISPLAY_CODE_RE.match(normalized):
-        refresh_cn_security_index(force=False)
+        try:
+            refresh_cn_security_index(force=False)
+        except Exception:
+            pass
         with connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM securities WHERE market = 'CN' ORDER BY display_code"
@@ -294,8 +303,11 @@ def resolve_security_candidates(query: str, market: str | None = None, limit: in
 
     # For Chinese text and ascii words like pinyin abbreviations, search the CN index
     # before inventing a new US ticker.
-    if any("\u4e00" <= ch <= "\u9fff" for ch in raw_query) or raw_query.isascii():
-        refresh_cn_security_index(force=False)
+    if any("\u4e00" <= ch <= "\u9fff" for ch in raw_query) or (raw_query.isascii() and not looks_like_us_ticker):
+        try:
+            refresh_cn_security_index(force=False)
+        except Exception:
+            pass
         with connect() as conn:
             rows = conn.execute("SELECT * FROM securities WHERE market = 'CN' ORDER BY display_code").fetchall()
         cn_matches = _rows_to_matches(raw_query.strip().lower(), [dict(row) for row in rows], limit=limit)
@@ -321,12 +333,7 @@ def resolve_security_candidates(query: str, market: str | None = None, limit: in
             return [{**refreshed, "confidence": _score_match(raw_query, refreshed) or 0.9}]
         return [{**dict(row), "confidence": _score_match(raw_query, dict(row)) or 0.9} for row in exact_rows[:limit]]
 
-    if preferred_market == "US" or (
-        raw_query.isascii()
-        and raw_query.upper() == raw_query
-        and US_SYMBOL_RE.match(normalized)
-        and not CN_SYMBOL_RE.match(normalized)
-    ):
+    if preferred_market == "US" or looks_like_us_ticker:
         with connect() as conn:
             row = conn.execute(
                 "SELECT * FROM securities WHERE market = 'US' AND (symbol = ? OR display_code = ?) LIMIT 1",

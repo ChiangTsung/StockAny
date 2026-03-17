@@ -63,11 +63,57 @@ def compile_charter_markdown(raw_markdown: str) -> dict[str, list[str]]:
     return compiled
 
 
+def render_charter_markdown(compiled: dict[str, list[str]]) -> str:
+    lines = ["# StockAny Charter", ""]
+    for section in SECTION_MAP.values():
+        lines.append(f"## {section}")
+        lines.extend(f"- {value}" for value in compiled.get(section, []))
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
+
+
+def summarize_charter(compiled: dict[str, list[str]], limit: int = 4) -> str:
+    items: list[str] = []
+    for section in SECTION_MAP.values():
+        items.extend(compiled.get(section, []))
+        if len(items) >= limit:
+            break
+    return "；".join(items[:limit])
+
+
 def _active_or_latest_charter(conn) -> dict[str, Any]:
     row = conn.execute(
-        "SELECT version, status, raw_markdown, compiled_rules_json, active, created_at FROM charters ORDER BY version DESC LIMIT 1"
+        "SELECT version, status, raw_markdown, compiled_rules_json, active, created_at FROM charters WHERE active = 1 ORDER BY version DESC LIMIT 1"
     ).fetchone()
+    if not row:
+        row = conn.execute(
+            "SELECT version, status, raw_markdown, compiled_rules_json, active, created_at FROM charters ORDER BY version DESC LIMIT 1"
+        ).fetchone()
     return dict(row) if row else {}
+
+
+def _insert_charter_version(
+    raw_markdown: str,
+    *,
+    status: str = "active",
+    activate: bool = True,
+) -> dict[str, Any]:
+    init_db()
+    compiled = compile_charter_markdown(raw_markdown)
+    with connect() as conn:
+        if activate:
+            conn.execute("UPDATE charters SET active = 0, status = 'superseded' WHERE active = 1")
+        cursor = conn.execute(
+            """
+            INSERT INTO charters (status, raw_markdown, compiled_rules_json, active, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (status, raw_markdown, json.dumps(compiled, ensure_ascii=False), 1 if activate else 0, utc_now_iso()),
+        )
+        conn.commit()
+        version = int(cursor.lastrowid)
+    _sync_charter_files(raw_markdown, version)
+    return {"version": version, "status": status, "compiled": compiled}
 
 
 def load_charter_context() -> dict[str, Any]:
@@ -100,6 +146,7 @@ def load_charter_context() -> dict[str, Any]:
 
     row["source_file"] = str(ACTIVE_CHARTER_PATH)
     row["versioned_source_file"] = str(versioned_path)
+    row["summary"] = summarize_charter(row["compiled_rules_json"])
     return row
 
 
@@ -108,22 +155,85 @@ def show_charter() -> dict[str, Any]:
 
 
 def set_charter_from_file(path: Path) -> dict[str, Any]:
-    init_db()
     raw = path.read_text(encoding="utf-8")
-    compiled = compile_charter_markdown(raw)
+    result = _insert_charter_version(raw, status="active", activate=True)
+    return {
+        "status": "active",
+        "compiled": result["compiled"],
+        "source_file": str(ACTIVE_CHARTER_PATH),
+        "version": result["version"],
+    }
+
+
+def list_charter_history() -> dict[str, Any]:
+    init_db()
     with connect() as conn:
-        conn.execute("UPDATE charters SET active = 0, status = 'superseded' WHERE active = 1")
-        cursor = conn.execute(
+        rows = conn.execute(
             """
-            INSERT INTO charters (status, raw_markdown, compiled_rules_json, active, created_at)
-            VALUES ('active', ?, ?, 1, ?)
+            SELECT version, status, active, created_at
+            FROM charters
+            ORDER BY version DESC
+            """
+        ).fetchall()
+    history = []
+    for row in rows:
+        item = dict(row)
+        versioned_path = _versioned_charter_path(int(item["version"]))
+        item["versioned_source_file"] = str(versioned_path)
+        history.append(item)
+    return {"versions": history}
+
+
+def switch_charter_version(version: int) -> dict[str, Any]:
+    init_db()
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT version, status, raw_markdown, compiled_rules_json, created_at
+            FROM charters
+            WHERE version = ?
             """,
-            (raw, json.dumps(compiled, ensure_ascii=False), utc_now_iso()),
-        )
+            (version,),
+        ).fetchone()
+        if not row:
+            raise ValueError(f"charter version {version} not found")
+        conn.execute("UPDATE charters SET active = 0, status = 'superseded' WHERE active = 1")
+        conn.execute("UPDATE charters SET active = 1, status = 'active' WHERE version = ?", (version,))
         conn.commit()
-        version = int(cursor.lastrowid)
-    _sync_charter_files(raw, version)
-    return {"status": "active", "compiled": compiled, "source_file": str(ACTIVE_CHARTER_PATH), "version": version}
+    raw_markdown = row["raw_markdown"] or ""
+    if raw_markdown:
+        _sync_charter_files(raw_markdown, int(row["version"]))
+    return show_charter()
+
+
+def apply_charter_signals(signals: list[dict[str, Any]], source_ref: str = "") -> dict[str, Any]:
+    if not signals:
+        return {"updated": False, "version": 0, "applied": []}
+    charter = load_charter_context()
+    compiled = charter.get("compiled_rules_json", {}) or {}
+    for section in SECTION_MAP.values():
+        compiled.setdefault(section, [])
+    applied = []
+    for signal in signals:
+        candidate_text = (signal.get("candidate_text") or "").strip()
+        candidate_kind = signal.get("candidate_kind") or ""
+        if not candidate_text or candidate_kind not in KIND_TO_SECTION:
+            continue
+        section = KIND_TO_SECTION[candidate_kind]
+        if candidate_text in compiled[section]:
+            continue
+        compiled[section].append(candidate_text)
+        applied.append({"candidate_kind": candidate_kind, "candidate_text": candidate_text})
+    if not applied:
+        return {"updated": False, "version": charter.get("version", 0), "applied": []}
+    raw_markdown = render_charter_markdown(compiled)
+    result = _insert_charter_version(raw_markdown, status="active", activate=True)
+    return {
+        "updated": True,
+        "version": result["version"],
+        "applied": applied,
+        "source_ref": source_ref,
+    }
 
 
 def add_candidate(source_type: str, source_ref: str, candidate_text: str, candidate_kind: str, confidence: float) -> int:
@@ -224,11 +334,7 @@ def merge_candidates(candidate_ids: list[int]) -> dict[str, Any]:
             if row["candidate_text"] not in compiled[section]:
                 compiled[section].append(row["candidate_text"])
             merged_ids.append(int(row["candidate_id"]))
-        raw_lines = ["# StockAny Charter", ""]
-        for section, values in compiled.items():
-            raw_lines.append(f"## {section}")
-            raw_lines.extend(f"- {value}" for value in values)
-            raw_lines.append("")
+        raw_markdown = render_charter_markdown(compiled)
         if latest.get("active"):
             conn.execute("UPDATE charters SET active = 0, status = 'superseded' WHERE active = 1")
             new_status = "active"
@@ -241,16 +347,15 @@ def merge_candidates(candidate_ids: list[int]) -> dict[str, Any]:
             INSERT INTO charters (status, raw_markdown, compiled_rules_json, active, created_at)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (new_status, "\n".join(raw_lines).strip() + "\n", json.dumps(compiled, ensure_ascii=False), active, utc_now_iso()),
+            (new_status, raw_markdown, json.dumps(compiled, ensure_ascii=False), active, utc_now_iso()),
         )
         if merged_ids:
             conn.execute(
                 f"UPDATE charter_candidates SET review_status = 'merged' WHERE candidate_id IN ({','.join('?' for _ in merged_ids)})",
                 tuple(merged_ids),
-            )
+        )
         conn.commit()
         version = int(cursor.lastrowid)
-    raw_markdown = "\n".join(raw_lines).strip() + "\n"
     _sync_charter_files(raw_markdown, version)
     return {
         "merged_candidate_ids": merged_ids,
